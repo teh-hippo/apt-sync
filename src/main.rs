@@ -117,6 +117,103 @@ fn parse_installed(output: &str) -> BTreeSet<String> {
         .collect()
 }
 
+// ── Apt history ─────────────────────────────────────────────────────
+
+struct HistoryEntry {
+    date: String,
+    commandline: String,
+    requested_by: Option<String>,
+    installed: Vec<String>,
+}
+
+fn read_history_logs() -> String {
+    let mut buf = String::new();
+
+    // Read rotated .gz logs (oldest first → newest last)
+    let mut gz_paths: Vec<PathBuf> = fs::read_dir("/var/log/apt")
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension().is_some_and(|e| e == "gz")
+                && p.file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("history"))
+        })
+        .collect();
+    gz_paths.sort();
+    gz_paths.reverse(); // highest number = oldest, read oldest first
+
+    for path in &gz_paths {
+        if let Ok(output) = Command::new("zcat").arg(path).output() {
+            buf.push_str(&String::from_utf8_lossy(&output.stdout));
+        }
+    }
+
+    // Current log last (most recent)
+    if let Ok(current) = fs::read_to_string("/var/log/apt/history.log") {
+        buf.push_str(&current);
+    }
+
+    buf
+}
+
+fn parse_history(log: &str) -> Vec<HistoryEntry> {
+    let mut entries = Vec::new();
+    let mut date = String::new();
+    let mut cmdline = String::new();
+    let mut requested = None;
+    let mut installed = Vec::new();
+
+    for line in log.lines() {
+        if let Some(d) = line.strip_prefix("Start-Date: ") {
+            date = d.trim().to_string();
+            cmdline.clear();
+            requested = None;
+            installed.clear();
+        } else if let Some(c) = line.strip_prefix("Commandline: ") {
+            cmdline = c.trim().to_string();
+        } else if let Some(r) = line.strip_prefix("Requested-By: ") {
+            requested = Some(r.trim().to_string());
+        } else if let Some(pkgs) = line.strip_prefix("Install: ") {
+            installed = parse_history_packages(pkgs);
+        } else if line.starts_with("End-Date: ") && !installed.is_empty() {
+            entries.push(HistoryEntry {
+                date: date.clone(),
+                commandline: cmdline.clone(),
+                requested_by: requested.clone(),
+                installed: installed.clone(),
+            });
+        }
+    }
+
+    entries
+}
+
+fn parse_history_packages(pkgs_line: &str) -> Vec<String> {
+    // Entries are separated by "), " — commas inside parens are part of the entry
+    pkgs_line
+        .split("), ")
+        .filter_map(|entry| {
+            let name = entry.split(':').next()?;
+            if name.is_empty() {
+                return None;
+            }
+            if entry.contains("automatic") {
+                return None;
+            }
+            Some(name.to_string())
+        })
+        .collect()
+}
+
+fn find_install_history<'a>(entries: &'a [HistoryEntry], pkg: &str) -> Vec<&'a HistoryEntry> {
+    entries
+        .iter()
+        .filter(|e| e.installed.iter().any(|p| p == pkg))
+        .collect()
+}
+
 // ── Commands ────────────────────────────────────────────────────────
 
 fn cmd_status(pkg_path: &Path) {
@@ -341,6 +438,30 @@ fn cmd_snap(pkg_path: &Path) {
     cmd_add(pkg_path, &to_add);
 }
 
+fn cmd_why(names: &[String]) {
+    let log = read_history_logs();
+    let entries = parse_history(&log);
+
+    for (i, name) in names.iter().enumerate() {
+        if i > 0 {
+            println!();
+        }
+        let hits = find_install_history(&entries, name);
+        if hits.is_empty() {
+            println!("{DIM}{name}: no install history found{RESET}");
+            continue;
+        }
+        println!("{BOLD}{CYAN}{name}{RESET}");
+        for entry in &hits {
+            let date = entry.date.split_whitespace().next().unwrap_or(&entry.date);
+            println!("  {GREEN}📅 {date}{RESET}  {DIM}{}{RESET}", entry.commandline);
+            if let Some(ref user) = entry.requested_by {
+                println!("     {DIM}by {user}{RESET}");
+            }
+        }
+    }
+}
+
 // ── Help ────────────────────────────────────────────────────────────
 
 fn print_help() {
@@ -358,7 +479,8 @@ fn print_help() {
     {GREEN}remove{RESET}  {DIM}(rm){RESET}    Remove package(s) from curated list\n    \
     {GREEN}install{RESET} {DIM}(i){RESET}     Install missing curated packages\n    \
     {GREEN}diff{RESET}    {DIM}(d){RESET}     Compare system packages vs curated list\n    \
-    {GREEN}snap{RESET}             Interactively pick from system packages\n\
+    {GREEN}snap{RESET}             Interactively pick from system packages\n    \
+    {GREEN}why{RESET}     {DIM}(w){RESET}     Show install history for package(s)\n\
 \n\
 {BOLD}OPTIONS:{RESET}\n    \
     {YELLOW}--dry-run{RESET}        Show what would happen (install only)\n    \
@@ -404,6 +526,13 @@ fn main() -> ExitCode {
         "install" | "i" => cmd_install(&pkg_path, dry_run),
         "diff" | "d" => cmd_diff(&pkg_path),
         "snap" => cmd_snap(&pkg_path),
+        "why" | "w" => {
+            if rest_no_flags.is_empty() {
+                eprintln!("{RED}Usage: apt-sync why <pkg...>{RESET}");
+                return ExitCode::FAILURE;
+            }
+            cmd_why(&rest_no_flags);
+        }
         _ => {
             eprintln!("{RED}Unknown command: {cmd}{RESET}");
             print_help();
@@ -570,5 +699,71 @@ mod tests {
         cmd_add(&tmp, &["git".into()]);
         let pkgs = load_packages(&tmp);
         assert_eq!(pkgs.len(), 2);
+    }
+
+    #[test]
+    fn parse_history_entry() {
+        let log = "\
+Start-Date: 2026-02-10  12:11:38
+Commandline: apt-get install -y build-essential
+Requested-By: user (1000)
+Install: build-essential:amd64 (12.12ubuntu1), gcc:amd64 (4:15.2.0-4ubuntu1, automatic)
+End-Date: 2026-02-10  12:12:00
+";
+        let entries = parse_history(log);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].date, "2026-02-10  12:11:38");
+        assert_eq!(entries[0].commandline, "apt-get install -y build-essential");
+        assert_eq!(entries[0].requested_by.as_deref(), Some("user (1000)"));
+        // Only non-automatic packages
+        assert_eq!(entries[0].installed, vec!["build-essential"]);
+    }
+
+    #[test]
+    fn parse_history_skips_upgrades() {
+        let log = "\
+Start-Date: 2026-02-06  08:54:10
+Commandline: apt full-upgrade --autoremove --purge
+Requested-By: user (1000)
+Upgrade: python3.13:amd64 (3.13.7-1ubuntu0.2, 3.13.7-1ubuntu0.3)
+End-Date: 2026-02-06  08:55:14
+";
+        let entries = parse_history(log);
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn parse_history_multiple_entries() {
+        let log = "\
+Start-Date: 2025-07-17  11:55:46
+Commandline: apt-get install --assume-yes apt-transport-https ca-certificates
+Requested-By: user (1000)
+Install: apt-transport-https:amd64 (3.0.0), ca-certificates:amd64 (1.0, automatic)
+End-Date: 2025-07-17  11:56:00
+
+Start-Date: 2026-01-15  14:26:08
+Commandline: apt -y install apt-transport-https
+Install: apt-transport-https:amd64 (3.1.6ubuntu2)
+End-Date: 2026-01-15  14:26:10
+";
+        let entries = parse_history(log);
+        assert_eq!(entries.len(), 2);
+        let hits = find_install_history(&entries, "apt-transport-https");
+        assert_eq!(hits.len(), 2);
+        // Second entry has no requested_by
+        assert!(hits[1].requested_by.is_none());
+    }
+
+    #[test]
+    fn parse_history_packages_filters_automatic() {
+        let line = "build-essential:amd64 (12.12), gcc:amd64 (15.2, automatic), make:amd64 (4.4, automatic)";
+        let pkgs = parse_history_packages(line);
+        assert_eq!(pkgs, vec!["build-essential"]);
+    }
+
+    #[test]
+    fn find_history_no_match() {
+        let entries = parse_history("");
+        assert!(find_install_history(&entries, "nonexistent").is_empty());
     }
 }

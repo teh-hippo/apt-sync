@@ -35,6 +35,7 @@ apt-sync install --dry-run  # just show me
 | `install` | `i` | Install missing curated packages |
 | `diff` | `d` | Compare system packages vs curated list |
 | `snap` | — | Interactively pick from system packages |
+| `why <pkg...>` | `w` | Show install history for package(s) |
 
 ## How It Works
 
