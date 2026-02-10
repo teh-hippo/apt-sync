@@ -69,12 +69,29 @@ fn system_manual_packages() -> BTreeSet<String> {
         .collect()
 }
 
-fn is_package_installed(pkg: &str) -> bool {
-    Command::new("dpkg-query")
-        .args(["-W", "-f=${Status}", pkg])
+fn installed_set(pkgs: &BTreeSet<String>) -> BTreeSet<String> {
+    if pkgs.is_empty() {
+        return BTreeSet::new();
+    }
+    let output = Command::new("dpkg-query")
+        .args(["-W", "-f=${Package}\t${Status}\n"])
+        .args(pkgs)
+        .stderr(std::process::Stdio::null())
         .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains("install ok installed"))
-        .unwrap_or(false)
+        .expect("failed to run dpkg-query — is dpkg installed?");
+    parse_installed(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_installed(output: &str) -> BTreeSet<String> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let (pkg, status) = line.split_once('\t')?;
+            status
+                .contains("install ok installed")
+                .then(|| pkg.to_string())
+        })
+        .collect()
 }
 
 // ── Commands ────────────────────────────────────────────────────────
@@ -89,20 +106,21 @@ fn cmd_status(pkg_path: &Path) {
         "{BOLD}{CYAN}📦 apt-sync status{RESET}  {DIM}({} curated){RESET}\n",
         pkgs.len()
     );
-    let mut installed = 0u32;
-    let mut missing = 0u32;
+    let installed = installed_set(&pkgs);
+    let mut n_installed = 0u32;
+    let mut n_missing = 0u32;
     for p in &pkgs {
-        if is_package_installed(p) {
+        if installed.contains(p) {
             println!("  {GREEN}✔ {p}{RESET}");
-            installed += 1;
+            n_installed += 1;
         } else {
             println!("  {RED}✘ {p}{RESET}  {DIM}(not installed){RESET}");
-            missing += 1;
+            n_missing += 1;
         }
     }
     println!();
-    println!("  {GREEN}{installed} installed{RESET}  {RED}{missing} missing{RESET}");
-    if missing > 0 {
+    println!("  {GREEN}{n_installed} installed{RESET}  {RED}{n_missing} missing{RESET}");
+    if n_missing > 0 {
         println!("  {DIM}Run `apt-sync install` to install missing packages{RESET}");
     }
 }
@@ -176,9 +194,10 @@ fn cmd_install(pkg_path: &Path, dry_run: bool) {
         println!("{YELLOW}📭 No curated packages to install.{RESET}");
         return;
     }
+    let installed = installed_set(&pkgs);
     let missing: Vec<&str> = pkgs
         .iter()
-        .filter(|p| !is_package_installed(p))
+        .filter(|p| !installed.contains(*p))
         .map(|s| s.as_str())
         .collect();
     if missing.is_empty() {
@@ -318,12 +337,6 @@ fn print_help() {
 {BOLD}OPTIONS:{RESET}\n    \
     {YELLOW}--dry-run{RESET}        Show what would happen (install only)\n    \
     {YELLOW}--help, -h{RESET}       Show this help\n",
-        BOLD = BOLD,
-        RESET = RESET,
-        CYAN = CYAN,
-        GREEN = GREEN,
-        YELLOW = YELLOW,
-        DIM = DIM,
     );
 }
 
@@ -338,9 +351,9 @@ fn main() -> ExitCode {
 
     let pkg_path = pkg_file_path();
     let cmd = args[0].as_str();
-    let rest: Vec<String> = args[1..].to_vec();
+    let rest = &args[1..];
     let dry_run = rest.iter().any(|a| a == "--dry-run");
-    let rest_no_flags: Vec<String> = rest.into_iter().filter(|a| !a.starts_with('-')).collect();
+    let rest_no_flags: Vec<String> = rest.iter().filter(|a| !a.starts_with('-')).cloned().collect();
 
     match cmd {
         "status" | "s" => cmd_status(&pkg_path),
@@ -436,5 +449,72 @@ mod tests {
         assert_eq!(on_system_only, vec![&"vim".to_string()]);
         assert!(in_list_only.contains(&&"curl".to_string()));
         assert!(in_list_only.contains(&&"zsh".to_string()));
+    }
+
+    #[test]
+    fn load_nonexistent_file() {
+        let path = Path::new("/tmp/apt-sync-nonexistent-test.txt");
+        assert!(load_packages(path).is_empty());
+    }
+
+    #[test]
+    fn parse_only_comments() {
+        let input = "# just a comment\n# another comment\n";
+        assert!(parse_packages(input).is_empty());
+    }
+
+    #[test]
+    fn save_preserves_header() {
+        let dir = std::env::temp_dir().join("apt-sync-test-header");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("header-test.txt");
+        let pkgs = BTreeSet::from(["git".to_string()]);
+        save_packages(&path, &pkgs).unwrap();
+        let raw = fs::read_to_string(&path).unwrap();
+        assert!(raw.starts_with("# apt-sync curated packages\n"));
+        assert!(raw.contains("# one package per line"));
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn add_remove_roundtrip() {
+        let dir = std::env::temp_dir().join("apt-sync-test-addrem");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("addrem-test.txt");
+        save_packages(&path, &BTreeSet::new()).unwrap();
+
+        cmd_add(&path, &["curl".into(), "git".into(), "zsh".into()]);
+        let pkgs = load_packages(&path);
+        assert_eq!(pkgs.len(), 3);
+
+        cmd_remove(&path, &["git".into()]);
+        let pkgs = load_packages(&path);
+        assert_eq!(pkgs.len(), 2);
+        assert!(!pkgs.contains("git"));
+
+        let _ = fs::remove_file(&path);
+    }
+
+    #[test]
+    fn parse_installed_output() {
+        let output = "curl\tinstall ok installed\n\
+                      git\tdeinstall ok config-files\n\
+                      zsh\tinstall ok installed\n";
+        let set = parse_installed(output);
+        assert_eq!(set.len(), 2);
+        assert!(set.contains("curl"));
+        assert!(set.contains("zsh"));
+        assert!(!set.contains("git"));
+    }
+
+    #[test]
+    fn parse_installed_empty() {
+        assert!(parse_installed("").is_empty());
+    }
+
+    #[test]
+    fn parse_installed_malformed() {
+        let output = "no-tab-here\n\tleading-tab\n";
+        assert!(parse_installed(output).is_empty());
     }
 }
