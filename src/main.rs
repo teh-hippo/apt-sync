@@ -214,6 +214,256 @@ fn find_install_history<'a>(entries: &'a [HistoryEntry], pkg: &str) -> Vec<&'a H
         .collect()
 }
 
+fn format_pkg_list(pkgs: &[&str]) -> String {
+    const MAX: usize = 10;
+    if pkgs.len() <= MAX {
+        pkgs.join(", ")
+    } else {
+        let mut s = pkgs[..MAX].join(", ");
+        s.push_str(&format!(" + {} more", pkgs.len() - MAX));
+        s
+    }
+}
+
+fn siblings<'a>(entry: &'a HistoryEntry, name: &str) -> Vec<&'a str> {
+    entry
+        .installed
+        .iter()
+        .map(String::as_str)
+        .filter(|p| *p != name)
+        .collect()
+}
+
+fn same_day_neighbors<'a>(
+    entries: &'a [HistoryEntry],
+    entry: &HistoryEntry,
+    name: &str,
+    sibling_set: &BTreeSet<&str>,
+) -> Vec<&'a str> {
+    let day = entry.date.split_whitespace().next().unwrap_or("");
+    entries
+        .iter()
+        .filter(|e| {
+            e.date.split_whitespace().next().unwrap_or("") == day
+                && !(e.date == entry.date && e.commandline == entry.commandline)
+        })
+        .flat_map(|e| e.installed.iter().map(String::as_str))
+        .filter(|p| *p != name && !sibling_set.contains(p))
+        .collect::<BTreeSet<&str>>()
+        .into_iter()
+        .collect()
+}
+
+// ── Shell history and journal context ───────────────────────────────
+
+#[derive(Debug, Clone)]
+struct ShellHistoryEntry {
+    timestamp: i64,
+    command: String,
+}
+
+fn read_journal_pwd(apt_date: &str, commandline: &str) -> Option<String> {
+    // Normalize "2026-02-10  21:50:50" to "2026-02-10 21:50:50" (single space)
+    let normalized = apt_date.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    // Query journal with ±60s window around the apt command
+    let output = Command::new("journalctl")
+        .args([
+            "_COMM=sudo",
+            "--no-pager",
+            &format!("--since={normalized} -5seconds"),
+            &format!("--until={normalized} +60seconds"),
+        ])
+        .output()
+        .ok()?;
+
+    let journal = String::from_utf8_lossy(&output.stdout);
+    parse_journal_pwd(&journal, commandline)
+}
+
+fn parse_journal_pwd(journal_output: &str, commandline: &str) -> Option<String> {
+    // Extract key package names from commandline to match against COMMAND field
+    let pkg_names: Vec<&str> = commandline
+        .split_whitespace()
+        .skip_while(|w| w.starts_with('-') || *w == "apt-get" || *w == "apt" || *w == "install")
+        .filter(|w| !w.starts_with('-'))
+        .collect();
+
+    if pkg_names.is_empty() {
+        return None;
+    }
+
+    let home = env::var("HOME").ok()?;
+
+    for line in journal_output.lines() {
+        // Look for PWD= and COMMAND= anywhere in the line
+        if !line.contains("PWD=") || !line.contains("COMMAND=") {
+            continue;
+        }
+
+        let mut pwd = None;
+        let mut command = None;
+
+        // Extract PWD value
+        if let Some(pwd_start) = line.find("PWD=") {
+            let after_pwd = &line[pwd_start + 4..];
+            // PWD value ends at the next semicolon or space-semicolon
+            let pwd_end = after_pwd
+                .find(" ;")
+                .or_else(|| after_pwd.find('\n'))
+                .unwrap_or(after_pwd.len());
+            pwd = Some(&after_pwd[..pwd_end]);
+        }
+
+        // Extract COMMAND value
+        if let Some(cmd_start) = line.find("COMMAND=") {
+            let after_cmd = &line[cmd_start + 8..];
+            // COMMAND value goes to end of line or next separator
+            let cmd_end = after_cmd.find('\n').unwrap_or(after_cmd.len());
+            command = Some(&after_cmd[..cmd_end]);
+        }
+
+        // Check if this line matches our apt command
+        if let (Some(p), Some(c)) = (pwd, command) {
+            // Match if command contains apt and any of our package names
+            if c.contains("apt") && pkg_names.iter().any(|pkg| c.contains(pkg)) {
+                // Replace $HOME with ~ for display
+                let display_path = if let Some(rel) = p.strip_prefix(&home) {
+                    if rel.is_empty() {
+                        "~".to_string()
+                    } else {
+                        format!("~{rel}")
+                    }
+                } else {
+                    p.to_string()
+                };
+                return Some(display_path);
+            }
+        }
+    }
+
+    None
+}
+
+fn read_shell_history() -> Vec<ShellHistoryEntry> {
+    // Detect history file
+    let history_path = env::var("HISTFILE")
+        .ok()
+        .or_else(|| {
+            env::var("HOME").ok().and_then(|home| {
+                let zsh_hist = PathBuf::from(&home).join(".zsh_history");
+                let bash_hist = PathBuf::from(&home).join(".bash_history");
+                if zsh_hist.exists() {
+                    Some(zsh_hist.to_string_lossy().to_string())
+                } else if bash_hist.exists() {
+                    Some(bash_hist.to_string_lossy().to_string())
+                } else {
+                    None
+                }
+            })
+        });
+
+    let Some(path) = history_path else {
+        return Vec::new();
+    };
+
+    let Ok(contents) = fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+
+    parse_shell_history(&contents)
+}
+
+fn parse_shell_history(contents: &str) -> Vec<ShellHistoryEntry> {
+    let mut entries = Vec::new();
+
+    for line in contents.lines() {
+        // Zsh format: ": epoch:0;command"
+        if let Some(rest) = line.strip_prefix(": ") {
+            if let Some((epoch_part, cmd)) = rest.split_once(';') {
+                // Parse "epoch:0" → extract epoch
+                if let Some(epoch_str) = epoch_part.split(':').next() {
+                    if let Ok(timestamp) = epoch_str.parse::<i64>() {
+                        entries.push(ShellHistoryEntry {
+                            timestamp,
+                            command: cmd.to_string(),
+                        });
+                    }
+                }
+            }
+        }
+        // Note: bash history without timestamps is not supported
+        // (would need to track #epoch lines, but this system uses zsh)
+    }
+
+    entries
+}
+
+fn apt_date_to_epoch(apt_date: &str) -> Option<i64> {
+    // Normalize "2026-02-10  21:50:50" to "2026-02-10 21:50:50"
+    let normalized = apt_date.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    let output = Command::new("date")
+        .args(["-d", &normalized, "+%s"])
+        .output()
+        .ok()?;
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.trim().parse::<i64>().ok()
+}
+
+fn is_interesting_command(cmd: &str) -> bool {
+    let first_word = cmd.split_whitespace().next().unwrap_or("");
+    !matches!(
+        first_word,
+        "ls" | "clear" | "exit" | "pwd" | "echo" | "cat" | "true" | "history" | ""
+    )
+}
+
+fn find_nearby_commands(
+    history: &[ShellHistoryEntry],
+    target_epoch: i64,
+    window_secs: i64,
+    show_all: bool,
+) -> Vec<String> {
+    let mut nearby: Vec<(&ShellHistoryEntry, i64)> = history
+        .iter()
+        .filter_map(|entry| {
+            let delta = (entry.timestamp - target_epoch).abs();
+            if delta <= window_secs {
+                Some((entry, delta))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Sort by proximity to target time
+    nearby.sort_by_key(|(_, delta)| *delta);
+
+    let mut commands = Vec::new();
+    for (entry, _) in nearby {
+        // Skip apt install commands
+        if entry.command.contains("apt-get install") || entry.command.contains("apt install") {
+            continue;
+        }
+
+        // Skip trivial commands unless show_all
+        if !show_all && !is_interesting_command(&entry.command) {
+            continue;
+        }
+
+        commands.push(entry.command.clone());
+
+        // Cap at 5 commands
+        if commands.len() >= 5 {
+            break;
+        }
+    }
+
+    commands
+}
+
 // ── Commands ────────────────────────────────────────────────────────
 
 fn cmd_status(pkg_path: &Path) {
@@ -438,9 +688,11 @@ fn cmd_snap(pkg_path: &Path) {
     cmd_add(pkg_path, &to_add);
 }
 
-fn cmd_why(names: &[String]) {
+fn cmd_why(names: &[String], window_mins: u32, show_all: bool) {
     let log = read_history_logs();
     let entries = parse_history(&log);
+    let shell_history = read_shell_history();
+    let window_secs = i64::from(window_mins) * 60;
 
     for (i, name) in names.iter().enumerate() {
         if i > 0 {
@@ -457,6 +709,35 @@ fn cmd_why(names: &[String]) {
             println!("  {GREEN}📅 {date}{RESET}  {DIM}{}{RESET}", entry.commandline);
             if let Some(ref user) = entry.requested_by {
                 println!("     {DIM}by {user}{RESET}");
+            }
+
+            // Working directory from journal
+            if let Some(pwd) = read_journal_pwd(&entry.date, &entry.commandline) {
+                println!("     {DIM}in: {pwd}{RESET}");
+            }
+
+            let sibs = siblings(entry, name);
+            if !sibs.is_empty() {
+                println!("     {DIM}with: {}{RESET}", format_pkg_list(&sibs));
+            }
+            let sibling_set: BTreeSet<&str> = sibs.iter().copied().collect();
+            let neighbors = same_day_neighbors(&entries, entry, name, &sibling_set);
+            if !neighbors.is_empty() {
+                println!(
+                    "     {DIM}also that day: {}{RESET}",
+                    format_pkg_list(&neighbors)
+                );
+            }
+
+            // Shell history context
+            if let Some(epoch) = apt_date_to_epoch(&entry.date) {
+                let nearby = find_nearby_commands(&shell_history, epoch, window_secs, show_all);
+                if !nearby.is_empty() {
+                    println!("     {DIM}around then:{RESET}");
+                    for cmd in &nearby {
+                        println!("       {DIM}{cmd}{RESET}");
+                    }
+                }
             }
         }
     }
@@ -484,6 +765,8 @@ fn print_help() {
 \n\
 {BOLD}OPTIONS:{RESET}\n    \
     {YELLOW}--dry-run{RESET}        Show what would happen (install only)\n    \
+    {YELLOW}--window=N{RESET}       Minutes before/after install to search history (why only, default: 5)\n    \
+    {YELLOW}--all{RESET}            Show all commands in history window (why only, default: interesting only)\n    \
     {YELLOW}--help, -h{RESET}       Show this help\n\
 \n\
 {BOLD}CONFIG:{RESET}\n    \
@@ -504,7 +787,24 @@ fn main() -> ExitCode {
     let cmd = args[0].as_str();
     let rest = &args[1..];
     let dry_run = rest.iter().any(|a| a == "--dry-run");
-    let rest_no_flags: Vec<String> = rest.iter().filter(|a| !a.starts_with('-')).cloned().collect();
+
+    // Parse --window=N for why command
+    let window_mins = rest
+        .iter()
+        .find_map(|a| a.strip_prefix("--window=")?.parse().ok())
+        .unwrap_or(5);
+    let show_all = rest.iter().any(|a| a == "--all");
+
+    let rest_no_flags: Vec<String> = rest
+        .iter()
+        .filter(|a| !a.starts_with('-') || (a.starts_with("--window=") || *a == "--all"))
+        .cloned()
+        .collect();
+    let rest_no_flags: Vec<String> = rest_no_flags
+        .iter()
+        .filter(|a| !a.starts_with("--window=") && *a != "--all")
+        .cloned()
+        .collect();
 
     match cmd {
         "status" | "s" => cmd_status(&pkg_path),
@@ -531,7 +831,7 @@ fn main() -> ExitCode {
                 eprintln!("{RED}Usage: apt-sync why <pkg...>{RESET}");
                 return ExitCode::FAILURE;
             }
-            cmd_why(&rest_no_flags);
+            cmd_why(&rest_no_flags, window_mins, show_all);
         }
         _ => {
             eprintln!("{RED}Unknown command: {cmd}{RESET}");
@@ -765,5 +1065,266 @@ End-Date: 2026-01-15  14:26:10
     fn find_history_no_match() {
         let entries = parse_history("");
         assert!(find_install_history(&entries, "nonexistent").is_empty());
+    }
+
+    #[test]
+    fn why_shows_siblings() {
+        let log = "\
+Start-Date: 2025-08-10  10:00:00
+Commandline: apt-get install uidmap aardvark-dns
+Requested-By: user (1000)
+Install: uidmap:amd64 (1.0), aardvark-dns:amd64 (1.0)
+End-Date: 2025-08-10  10:01:00
+";
+        let entries = parse_history(log);
+        let hits = find_install_history(&entries, "uidmap");
+        assert_eq!(hits.len(), 1);
+        let sibs = siblings(hits[0], "uidmap");
+        assert_eq!(sibs, vec!["aardvark-dns"]);
+    }
+
+    #[test]
+    fn why_shows_same_day_context() {
+        let log = "\
+Start-Date: 2025-08-10  10:00:00
+Commandline: apt-get install uidmap aardvark-dns
+Install: uidmap:amd64 (1.0), aardvark-dns:amd64 (1.0)
+End-Date: 2025-08-10  10:01:00
+
+Start-Date: 2025-08-10  14:00:00
+Commandline: apt-get install podman slirp4netns
+Install: podman:amd64 (1.0), slirp4netns:amd64 (1.0)
+End-Date: 2025-08-10  14:01:00
+";
+        let entries = parse_history(log);
+        let hits = find_install_history(&entries, "uidmap");
+        let sibs = siblings(hits[0], "uidmap");
+        let sibling_set: BTreeSet<&str> = sibs.iter().copied().collect();
+        let neighbors = same_day_neighbors(&entries, hits[0], "uidmap", &sibling_set);
+        assert_eq!(neighbors, vec!["podman", "slirp4netns"]);
+    }
+
+    #[test]
+    fn why_same_day_excludes_siblings() {
+        let log = "\
+Start-Date: 2025-08-10  10:00:00
+Commandline: apt-get install uidmap aardvark-dns
+Install: uidmap:amd64 (1.0), aardvark-dns:amd64 (1.0)
+End-Date: 2025-08-10  10:01:00
+
+Start-Date: 2025-08-10  14:00:00
+Commandline: apt-get install aardvark-dns podman
+Install: aardvark-dns:amd64 (1.0), podman:amd64 (1.0)
+End-Date: 2025-08-10  14:01:00
+";
+        let entries = parse_history(log);
+        let hits = find_install_history(&entries, "uidmap");
+        let sibs = siblings(hits[0], "uidmap");
+        assert!(sibs.contains(&"aardvark-dns"));
+        let sibling_set: BTreeSet<&str> = sibs.iter().copied().collect();
+        let neighbors = same_day_neighbors(&entries, hits[0], "uidmap", &sibling_set);
+        // aardvark-dns is already a sibling, should not appear in same-day
+        assert!(!neighbors.contains(&"aardvark-dns"));
+        assert!(neighbors.contains(&"podman"));
+    }
+
+    #[test]
+    fn why_no_context_when_solo() {
+        let log = "\
+Start-Date: 2025-08-10  10:00:00
+Commandline: apt-get install uidmap
+Install: uidmap:amd64 (1.0)
+End-Date: 2025-08-10  10:01:00
+";
+        let entries = parse_history(log);
+        let hits = find_install_history(&entries, "uidmap");
+        let sibs = siblings(hits[0], "uidmap");
+        assert!(sibs.is_empty());
+        let sibling_set: BTreeSet<&str> = sibs.iter().copied().collect();
+        let neighbors = same_day_neighbors(&entries, hits[0], "uidmap", &sibling_set);
+        assert!(neighbors.is_empty());
+    }
+
+    #[test]
+    fn why_format_pkg_list_truncation() {
+        let short: Vec<&str> = vec!["a", "b", "c"];
+        assert_eq!(format_pkg_list(&short), "a, b, c");
+
+        let exact: Vec<&str> = (0..10).map(|i| ["a","b","c","d","e","f","g","h","i","j"][i]).collect();
+        assert_eq!(format_pkg_list(&exact), "a, b, c, d, e, f, g, h, i, j");
+
+        let long: Vec<&str> = vec!["a","b","c","d","e","f","g","h","i","j","k","l","m"];
+        let result = format_pkg_list(&long);
+        assert!(result.ends_with("+ 3 more"));
+        assert!(result.starts_with("a, b, c"));
+    }
+
+    #[test]
+    fn parse_journal_pwd_extracts_path() {
+        let journal = "\
+Feb 10 21:50:50 host sudo[12345]: PWD=/home/user/dotfiles ; USER=root ; COMMAND=/usr/bin/apt-get install -y uidmap
+Feb 10 21:50:51 host systemd[1]: Starting apt-daily.service";
+        let result = parse_journal_pwd(journal, "apt-get install -y uidmap");
+        assert_eq!(result, Some("~/dotfiles".to_string()));
+    }
+
+    #[test]
+    fn parse_journal_pwd_replaces_home() {
+        let home = env::var("HOME").unwrap_or_else(|_| "/home/testuser".to_string());
+        let journal = format!(
+            "Feb 10 21:50:50 host sudo[12345]: PWD={home}/projects/foo ; USER=root ; COMMAND=/usr/bin/apt install bar"
+        );
+        let result = parse_journal_pwd(&journal, "apt install bar");
+        assert_eq!(result, Some("~/projects/foo".to_string()));
+    }
+
+    #[test]
+    fn parse_journal_pwd_no_match() {
+        let journal = "\
+Feb 10 21:50:50 host sudo[12345]: PWD=/home/user/dotfiles ; USER=root ; COMMAND=/usr/bin/apt-get install -y somepackage
+Feb 10 21:50:51 host systemd[1]: Starting apt-daily.service";
+        let result = parse_journal_pwd(journal, "apt-get install -y differentpackage");
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn find_nearby_commands_window() {
+        let history = vec![
+            ShellHistoryEntry {
+                timestamp: 1000,
+                command: "git status".to_string(),
+            },
+            ShellHistoryEntry {
+                timestamp: 1100,
+                command: "cd ~/project".to_string(),
+            },
+            ShellHistoryEntry {
+                timestamp: 1500,
+                command: "make build".to_string(),
+            },
+            ShellHistoryEntry {
+                timestamp: 1800,
+                command: "vim README.md".to_string(),
+            },
+        ];
+        let nearby = find_nearby_commands(&history, 1200, 300, false);
+        // Within ±300s of 1200: 1000 (200s away), 1100 (100s away), 1500 (300s away)
+        // 1800 is 600s away, excluded
+        assert_eq!(nearby.len(), 3);
+        assert!(nearby.contains(&"cd ~/project".to_string()));
+        assert!(nearby.contains(&"git status".to_string()));
+        assert!(nearby.contains(&"make build".to_string()));
+        assert!(!nearby.contains(&"vim README.md".to_string()));
+    }
+
+    #[test]
+    fn find_nearby_commands_excludes_apt() {
+        let history = vec![
+            ShellHistoryEntry {
+                timestamp: 1000,
+                command: "git status".to_string(),
+            },
+            ShellHistoryEntry {
+                timestamp: 1050,
+                command: "apt-get install foo".to_string(),
+            },
+            ShellHistoryEntry {
+                timestamp: 1100,
+                command: "apt install bar".to_string(),
+            },
+        ];
+        let nearby = find_nearby_commands(&history, 1050, 300, false);
+        assert_eq!(nearby.len(), 1);
+        assert_eq!(nearby[0], "git status");
+    }
+
+    #[test]
+    fn find_nearby_commands_caps_at_5() {
+        let mut history = Vec::new();
+        for i in 0..10 {
+            history.push(ShellHistoryEntry {
+                timestamp: 1000 + i * 10,
+                command: format!("command{i}"),
+            });
+        }
+        let nearby = find_nearby_commands(&history, 1050, 300, false);
+        assert_eq!(nearby.len(), 5);
+    }
+
+    #[test]
+    fn find_nearby_commands_filters_trivial() {
+        let history = vec![
+            ShellHistoryEntry {
+                timestamp: 1000,
+                command: "ls -la".to_string(),
+            },
+            ShellHistoryEntry {
+                timestamp: 1010,
+                command: "clear".to_string(),
+            },
+            ShellHistoryEntry {
+                timestamp: 1020,
+                command: "git status".to_string(),
+            },
+            ShellHistoryEntry {
+                timestamp: 1030,
+                command: "pwd".to_string(),
+            },
+            ShellHistoryEntry {
+                timestamp: 1040,
+                command: "cargo build".to_string(),
+            },
+        ];
+        let nearby = find_nearby_commands(&history, 1020, 300, false);
+        // Only git status and cargo build should be included
+        assert_eq!(nearby.len(), 2);
+        assert!(nearby.contains(&"git status".to_string()));
+        assert!(nearby.contains(&"cargo build".to_string()));
+        assert!(!nearby.contains(&"ls -la".to_string()));
+        assert!(!nearby.contains(&"clear".to_string()));
+        assert!(!nearby.contains(&"pwd".to_string()));
+    }
+
+    #[test]
+    fn find_nearby_commands_show_all() {
+        let history = vec![
+            ShellHistoryEntry {
+                timestamp: 1000,
+                command: "ls -la".to_string(),
+            },
+            ShellHistoryEntry {
+                timestamp: 1010,
+                command: "clear".to_string(),
+            },
+            ShellHistoryEntry {
+                timestamp: 1020,
+                command: "git status".to_string(),
+            },
+        ];
+        let nearby = find_nearby_commands(&history, 1010, 300, true);
+        // With show_all=true, all commands should be included
+        assert_eq!(nearby.len(), 3);
+        assert!(nearby.contains(&"ls -la".to_string()));
+        assert!(nearby.contains(&"clear".to_string()));
+        assert!(nearby.contains(&"git status".to_string()));
+    }
+
+    #[test]
+    fn parse_zsh_history_entries() {
+        let contents = "\
+: 1723305600:0;git status
+: 1723305610:0;cd ~/project
+: 1723305620:0;cargo build
+not a valid line
+: invalid:0;skipped
+";
+        let entries = parse_shell_history(contents);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].timestamp, 1723305600);
+        assert_eq!(entries[0].command, "git status");
+        assert_eq!(entries[1].timestamp, 1723305610);
+        assert_eq!(entries[1].command, "cd ~/project");
+        assert_eq!(entries[2].timestamp, 1723305620);
+        assert_eq!(entries[2].command, "cargo build");
     }
 }
