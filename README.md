@@ -56,3 +56,7 @@ cargo build --release
 
 - `--dry-run` — show what `install` would do without doing it
 - `--help` / `-h` — show help
+
+## License
+
+[MIT](LICENSE)
