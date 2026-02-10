@@ -13,18 +13,17 @@ const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
 const YELLOW: &str = "\x1b[33m";
 const CYAN: &str = "\x1b[36m";
-const MAGENTA: &str = "\x1b[35m";
 
 // ── Package list I/O ────────────────────────────────────────────────
 
 fn pkg_file_path() -> PathBuf {
     let exe = env::current_exe().unwrap_or_default();
-    let dir = exe.parent().unwrap_or(Path::new("."));
+    let dir = exe.parent().unwrap_or_else(|| Path::new("."));
     // Walk up from target/debug or target/release to repo root
     let repo = dir
         .ancestors()
         .find(|p| p.join("Cargo.toml").exists())
-        .unwrap_or(Path::new("."));
+        .unwrap_or_else(|| Path::new("."));
     repo.join("packages.txt")
 }
 
@@ -38,9 +37,9 @@ fn load_packages(path: &Path) -> BTreeSet<String> {
 fn parse_packages(contents: &str) -> BTreeSet<String> {
     contents
         .lines()
-        .map(|l| l.trim())
+        .map(str::trim)
         .filter(|l| !l.is_empty() && !l.starts_with('#'))
-        .map(|l| l.to_string())
+        .map(String::from)
         .collect()
 }
 
@@ -64,8 +63,9 @@ fn system_manual_packages() -> BTreeSet<String> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     stdout
         .lines()
-        .map(|l| l.trim().to_string())
+        .map(str::trim)
         .filter(|l| !l.is_empty())
+        .map(String::from)
         .collect()
 }
 
@@ -198,18 +198,18 @@ fn cmd_install(pkg_path: &Path, dry_run: bool) {
     let missing: Vec<&str> = pkgs
         .iter()
         .filter(|p| !installed.contains(*p))
-        .map(|s| s.as_str())
+        .map(String::as_str)
         .collect();
     if missing.is_empty() {
         println!(
-            "{GREEN}✨ All {count} curated packages are already installed!{RESET}",
-            count = pkgs.len()
+            "{GREEN}✨ All {} curated packages are already installed!{RESET}",
+            pkgs.len()
         );
         return;
     }
     println!(
-        "{BOLD}{MAGENTA}🚀 Installing {n} missing package(s){RESET}\n",
-        n = missing.len()
+        "{BOLD}{CYAN}🚀 Installing {} missing package(s){RESET}\n",
+        missing.len()
     );
     for m in &missing {
         println!("  {CYAN}• {m}{RESET}");
@@ -270,6 +270,7 @@ fn cmd_diff(pkg_path: &Path) {
     );
 }
 
+#[allow(clippy::significant_drop_tightening)]
 fn cmd_snap(pkg_path: &Path) {
     let system = system_manual_packages();
     let curated = load_packages(pkg_path);
@@ -281,8 +282,8 @@ fn cmd_snap(pkg_path: &Path) {
     }
 
     println!(
-        "{BOLD}{CYAN}📸 Snapshot — {n} uncurated manual packages{RESET}\n",
-        n = uncurated.len()
+        "{BOLD}{CYAN}📸 Snapshot — {} uncurated manual packages{RESET}\n",
+        uncurated.len()
     );
     println!(
         "{DIM}For each package, type {RESET}{BOLD}y{RESET}{DIM} to add, \
@@ -291,20 +292,22 @@ fn cmd_snap(pkg_path: &Path) {
     );
 
     let stdin = io::stdin();
-    let mut reader = stdin.lock();
     let mut to_add = Vec::new();
 
-    for pkg in &uncurated {
-        print!("  {CYAN}{pkg}{RESET}  [y/n/q] ");
-        io::stdout().flush().unwrap();
-        let mut line = String::new();
-        if reader.read_line(&mut line).is_err() {
-            break;
-        }
-        match line.trim().to_lowercase().as_str() {
-            "y" | "yes" => to_add.push((*pkg).clone()),
-            "q" | "quit" => break,
-            _ => {}
+    {
+        let mut reader = stdin.lock();
+        for pkg in &uncurated {
+            print!("  {CYAN}{pkg}{RESET}  [y/n/q] ");
+            io::stdout().flush().unwrap();
+            let mut line = String::new();
+            if reader.read_line(&mut line).is_err() {
+                break;
+            }
+            match line.trim().to_lowercase().as_str() {
+                "y" | "yes" => to_add.push((*pkg).clone()),
+                "q" | "quit" => break,
+                _ => {}
+            }
         }
     }
 
@@ -390,6 +393,29 @@ fn main() -> ExitCode {
 mod tests {
     use super::*;
 
+    struct TempFile(PathBuf);
+
+    impl TempFile {
+        fn new(name: &str) -> Self {
+            let path = std::env::temp_dir().join(format!("apt-sync-test-{name}"));
+            let _ = fs::create_dir_all(path.parent().unwrap());
+            Self(path)
+        }
+    }
+
+    impl Drop for TempFile {
+        fn drop(&mut self) {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
+
+    impl std::ops::Deref for TempFile {
+        type Target = Path;
+        fn deref(&self) -> &Path {
+            &self.0
+        }
+    }
+
     #[test]
     fn parse_empty() {
         assert!(parse_packages("").is_empty());
@@ -422,28 +448,20 @@ mod tests {
 
     #[test]
     fn roundtrip_save_load() {
-        let dir = std::env::temp_dir().join("apt-sync-test");
-        let _ = fs::create_dir_all(&dir);
-        let path = dir.join("test-packages.txt");
+        let tmp = TempFile::new("roundtrip.txt");
         let mut pkgs = BTreeSet::new();
         pkgs.insert("curl".to_string());
         pkgs.insert("git".to_string());
         pkgs.insert("zsh".to_string());
-        save_packages(&path, &pkgs).unwrap();
-        let loaded = load_packages(&path);
+        save_packages(&tmp, &pkgs).unwrap();
+        let loaded = load_packages(&tmp);
         assert_eq!(pkgs, loaded);
-        let _ = fs::remove_file(&path);
     }
 
     #[test]
     fn diff_logic() {
-        let mut curated = BTreeSet::new();
-        curated.insert("git".into());
-        curated.insert("curl".into());
-        curated.insert("zsh".into());
-        let mut system = BTreeSet::new();
-        system.insert("git".into());
-        system.insert("vim".into());
+        let curated = BTreeSet::from(["git".into(), "curl".into(), "zsh".into()]);
+        let system = BTreeSet::from(["git".into(), "vim".into()]);
         let on_system_only: Vec<&String> = system.difference(&curated).collect();
         let in_list_only: Vec<&String> = curated.difference(&system).collect();
         assert_eq!(on_system_only, vec![&"vim".to_string()]);
@@ -465,34 +483,27 @@ mod tests {
 
     #[test]
     fn save_preserves_header() {
-        let dir = std::env::temp_dir().join("apt-sync-test-header");
-        let _ = fs::create_dir_all(&dir);
-        let path = dir.join("header-test.txt");
+        let tmp = TempFile::new("header.txt");
         let pkgs = BTreeSet::from(["git".to_string()]);
-        save_packages(&path, &pkgs).unwrap();
-        let raw = fs::read_to_string(&path).unwrap();
+        save_packages(&tmp, &pkgs).unwrap();
+        let raw = fs::read_to_string(&*tmp).unwrap();
         assert!(raw.starts_with("# apt-sync curated packages\n"));
         assert!(raw.contains("# one package per line"));
-        let _ = fs::remove_file(&path);
     }
 
     #[test]
     fn add_remove_roundtrip() {
-        let dir = std::env::temp_dir().join("apt-sync-test-addrem");
-        let _ = fs::create_dir_all(&dir);
-        let path = dir.join("addrem-test.txt");
-        save_packages(&path, &BTreeSet::new()).unwrap();
+        let tmp = TempFile::new("addrem.txt");
+        save_packages(&tmp, &BTreeSet::new()).unwrap();
 
-        cmd_add(&path, &["curl".into(), "git".into(), "zsh".into()]);
-        let pkgs = load_packages(&path);
+        cmd_add(&tmp, &["curl".into(), "git".into(), "zsh".into()]);
+        let pkgs = load_packages(&tmp);
         assert_eq!(pkgs.len(), 3);
 
-        cmd_remove(&path, &["git".into()]);
-        let pkgs = load_packages(&path);
+        cmd_remove(&tmp, &["git".into()]);
+        let pkgs = load_packages(&tmp);
         assert_eq!(pkgs.len(), 2);
         assert!(!pkgs.contains("git"));
-
-        let _ = fs::remove_file(&path);
     }
 
     #[test]
@@ -516,5 +527,22 @@ mod tests {
     fn parse_installed_malformed() {
         let output = "no-tab-here\n\tleading-tab\n";
         assert!(parse_installed(output).is_empty());
+    }
+
+    #[test]
+    fn add_duplicate_is_idempotent() {
+        let tmp = TempFile::new("dup.txt");
+        save_packages(&tmp, &BTreeSet::new()).unwrap();
+
+        cmd_add(&tmp, &["git".into(), "git".into(), "curl".into()]);
+        let pkgs = load_packages(&tmp);
+        assert_eq!(pkgs.len(), 2);
+        assert!(pkgs.contains("git"));
+        assert!(pkgs.contains("curl"));
+
+        // Adding again doesn't duplicate
+        cmd_add(&tmp, &["git".into()]);
+        let pkgs = load_packages(&tmp);
+        assert_eq!(pkgs.len(), 2);
     }
 }

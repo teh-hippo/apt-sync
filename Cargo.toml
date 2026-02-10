@@ -3,6 +3,7 @@ name = "apt-sync"
 version = "0.1.0"
 edition = "2024"
 description = "Curated APT package manager for syncing dev environments"
+license = "MIT"
 
 [dependencies]
 
