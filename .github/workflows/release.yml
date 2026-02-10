@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Create tarball
+        run: |
+          cd target/release
+          tar czf apt-sync-x86_64-linux.tar.gz apt-sync
+          sha256sum apt-sync-x86_64-linux.tar.gz > apt-sync-x86_64-linux.tar.gz.sha256
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --generate-notes \
+            target/release/apt-sync-x86_64-linux.tar.gz \
+            target/release/apt-sync-x86_64-linux.tar.gz.sha256
