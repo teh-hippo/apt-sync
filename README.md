@@ -45,12 +45,39 @@ apt-sync install --dry-run  # just show me
 
 ## New Machine Setup
 
+### With mise (recommended)
+
+Requires a `GITHUB_TOKEN` with `repo` scope (private repo):
+
 ```bash
-git clone <this-repo>
+export GITHUB_TOKEN=ghp_...
+mise use -g github:teh-hippo/apt-sync
+apt-sync install
+```
+
+### From source
+
+```bash
+git clone https://github.com/teh-hippo/apt-sync.git
 cd apt-sync
 cargo build --release
 ./target/release/apt-sync install
 ```
+
+## Releasing
+
+Releases are automated via GitHub Actions. To cut a new release:
+
+```bash
+# Bump version in Cargo.toml, then:
+git add Cargo.toml Cargo.lock
+git commit -m "release: vX.Y.Z"
+git tag vX.Y.Z
+git push origin master --tags
+```
+
+The workflow builds an x86_64 Linux binary, creates a GitHub release with
+the tarball and SHA256 checksum, and generates release notes automatically.
 
 ## Options
 
