@@ -1,2 +1,33 @@
 # apt-sync curated packages
 # one package per line, comments start with #
+
+# ── Dev tools ────────────────────────────────────────────────────────
+apt-file
+build-essential
+git-crypt
+git-restore-mtime
+jq
+python-is-python3
+zsh
+
+# ── .NET dependency ──────────────────────────────────────────────────
+libicu-dev
+
+# ── Containers (podman stack) ────────────────────────────────────────
+aardvark-dns
+passt
+podman
+podman-compose
+uidmap
+
+# ── Network / mDNS (avahi stack) ─────────────────────────────────────
+avahi-autoipd
+avahi-daemon
+avahi-utils
+libnss-mdns
+
+# ── WSL / system ─────────────────────────────────────────────────────
+language-pack-en
+nftables
+ubuntu-wsl
+wslu
