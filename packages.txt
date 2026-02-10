@@ -1,0 +1,2 @@
+# apt-sync curated packages
+# one package per line, comments start with #
