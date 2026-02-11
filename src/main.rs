@@ -1161,10 +1161,12 @@ End-Date: 2025-08-10  10:01:00
 
     #[test]
     fn parse_journal_pwd_extracts_path() {
-        let journal = "\
-Feb 10 21:50:50 host sudo[12345]: PWD=/home/user/dotfiles ; USER=root ; COMMAND=/usr/bin/apt-get install -y uidmap
-Feb 10 21:50:51 host systemd[1]: Starting apt-daily.service";
-        let result = parse_journal_pwd(journal, "apt-get install -y uidmap");
+        let home = env::var("HOME").unwrap_or_else(|_| "/home/testuser".to_string());
+        let journal = format!(
+            "Feb 10 21:50:50 host sudo[12345]: PWD={home}/dotfiles ; USER=root ; COMMAND=/usr/bin/apt-get install -y uidmap\n\
+             Feb 10 21:50:51 host systemd[1]: Starting apt-daily.service"
+        );
+        let result = parse_journal_pwd(&journal, "apt-get install -y uidmap");
         assert_eq!(result, Some("~/dotfiles".to_string()));
     }
 
@@ -1180,10 +1182,12 @@ Feb 10 21:50:51 host systemd[1]: Starting apt-daily.service";
 
     #[test]
     fn parse_journal_pwd_no_match() {
-        let journal = "\
-Feb 10 21:50:50 host sudo[12345]: PWD=/home/user/dotfiles ; USER=root ; COMMAND=/usr/bin/apt-get install -y somepackage
-Feb 10 21:50:51 host systemd[1]: Starting apt-daily.service";
-        let result = parse_journal_pwd(journal, "apt-get install -y differentpackage");
+        let home = env::var("HOME").unwrap_or_else(|_| "/home/testuser".to_string());
+        let journal = format!(
+            "Feb 10 21:50:50 host sudo[12345]: PWD={home}/dotfiles ; USER=root ; COMMAND=/usr/bin/apt-get install -y somepackage\n\
+             Feb 10 21:50:51 host systemd[1]: Starting apt-daily.service"
+        );
+        let result = parse_journal_pwd(&journal, "apt-get install -y differentpackage");
         assert_eq!(result, None);
     }
 
