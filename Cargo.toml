@@ -10,3 +10,5 @@ license = "MIT"
 [profile.release]
 strip = true
 lto = true
+opt-level = "z"
+codegen-units = 1
