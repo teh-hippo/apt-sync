@@ -794,12 +794,7 @@ fn main() -> ExitCode {
 
     let rest_no_flags: Vec<String> = rest
         .iter()
-        .filter(|a| !a.starts_with('-') || (a.starts_with("--window=") || *a == "--all"))
-        .cloned()
-        .collect();
-    let rest_no_flags: Vec<String> = rest_no_flags
-        .iter()
-        .filter(|a| !a.starts_with("--window=") && *a != "--all")
+        .filter(|a| !a.starts_with('-'))
         .cloned()
         .collect();
 
