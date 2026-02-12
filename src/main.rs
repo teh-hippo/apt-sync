@@ -329,10 +329,7 @@ fn cmd_status(pkg_path: &Path) {
         println!("{YELLOW}📭 No curated packages yet. Use `apt-sync add <pkg>` to get started!{RESET}");
         return;
     }
-    println!(
-        "{BOLD}{CYAN}📦 apt-sync status{RESET}  {DIM}({} curated){RESET}\n",
-        pkgs.len()
-    );
+    println!("{BOLD}{CYAN}📦 apt-sync status{RESET}  {DIM}({} curated){RESET}\n", pkgs.len());
     let installed = installed_set(&pkgs);
     for p in &pkgs {
         if installed.contains(p) {
@@ -381,10 +378,7 @@ fn cmd_modify(pkg_path: &Path, names: &[String], add: bool) {
         println!("  {DIM}  {u} ({skip_msg}){RESET}");
     }
     if !changed.is_empty() {
-        println!(
-            "\n{CYAN}📝 {verb} {} package(s) from packages.txt{RESET}",
-            changed.len()
-        );
+        println!("\n{CYAN}📝 {verb} {} package(s) from packages.txt{RESET}", changed.len());
     }
 }
 
@@ -401,26 +395,17 @@ fn cmd_install(pkg_path: &Path, dry_run: bool) {
         .map(String::as_str)
         .collect();
     if missing.is_empty() {
-        println!(
-            "{GREEN}✨ All {} curated packages are already installed!{RESET}",
-            pkgs.len()
-        );
+        println!("{GREEN}✨ All {} curated packages are already installed!{RESET}", pkgs.len());
         return;
     }
-    println!(
-        "{BOLD}{CYAN}🚀 Installing {} missing package(s){RESET}\n",
-        missing.len()
-    );
+    println!("{BOLD}{CYAN}🚀 Installing {} missing package(s){RESET}\n", missing.len());
     for m in &missing {
         println!("  {CYAN}• {m}{RESET}");
     }
     println!();
     if dry_run {
         println!("{YELLOW}🏜️  Dry run — nothing was installed{RESET}");
-        println!(
-            "{DIM}Would run: apt-get install -y {}{RESET}",
-            missing.join(" ")
-        );
+        println!("{DIM}Would run: apt-get install -y {}{RESET}", missing.join(" "));
         return;
     }
     let status = Command::new("apt-get")
@@ -469,10 +454,7 @@ fn cmd_snap(pkg_path: &Path) {
         return;
     }
 
-    println!(
-        "{BOLD}{CYAN}📸 Snapshot — {} uncurated manual packages{RESET}\n",
-        uncurated.len()
-    );
+    println!("{BOLD}{CYAN}📸 Snapshot — {} uncurated manual packages{RESET}\n", uncurated.len());
     println!(
         "{DIM}For each package, type {RESET}{BOLD}y{RESET}{DIM} to add, \
          {RESET}{BOLD}n{RESET}{DIM} to skip, \
@@ -541,10 +523,7 @@ fn cmd_why(names: &[String], window_mins: u32, show_all: bool) {
             let sibling_set: BTreeSet<&str> = sibs.iter().copied().collect();
             let neighbors = same_day_neighbors(&entries, entry, name, &sibling_set);
             if !neighbors.is_empty() {
-                println!(
-                    "     {DIM}also that day: {}{RESET}",
-                    format_pkg_list(&neighbors)
-                );
+                println!("     {DIM}also that day: {}{RESET}", format_pkg_list(&neighbors));
             }
 
             // Shell history context
