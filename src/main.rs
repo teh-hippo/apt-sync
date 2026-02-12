@@ -537,29 +537,17 @@ fn cmd_diff(pkg_path: &Path) {
         println!("{GREEN}✨ System and curated list are in perfect sync!{RESET}");
         return;
     }
-    if !on_system_only.is_empty() {
-        println!(
-            "{BOLD}{YELLOW}🔍 On system but not curated{RESET} {DIM}({} packages){RESET}\n",
-            on_system_only.len()
-        );
-        for p in &on_system_only {
-            println!("  {YELLOW}? {p}{RESET}");
+    for (items, header, icon, color) in [
+        (&on_system_only, "🔍 On system but not curated", "?", YELLOW),
+        (&in_list_only, "📋 Curated but not on system", "✘", RED),
+    ] {
+        if !items.is_empty() {
+            println!("{BOLD}{color}{header}{RESET} {DIM}({} packages){RESET}\n", items.len());
+            for p in items { println!("  {color}{icon} {p}{RESET}"); }
+            println!();
         }
-        println!();
     }
-    if !in_list_only.is_empty() {
-        println!(
-            "{BOLD}{RED}📋 Curated but not on system{RESET} {DIM}({} packages){RESET}\n",
-            in_list_only.len()
-        );
-        for p in &in_list_only {
-            println!("  {RED}✘ {p}{RESET}");
-        }
-        println!();
-    }
-    println!(
-        "{DIM}Use `apt-sync add <pkg>` to curate, `apt-sync install` to install missing{RESET}"
-    );
+    println!("{DIM}Use `apt-sync add <pkg>` to curate, `apt-sync install` to install missing{RESET}");
 }
 
 #[allow(clippy::significant_drop_tightening)]
