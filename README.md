@@ -83,7 +83,11 @@ the tarball and SHA256 checksum, and generates release notes automatically.
 ## Options
 
 - `--dry-run` — show what `install` would do without doing it
+- `--window=N` — minutes before/after install to search shell history (`why` only, default: 5)
+- `--all` — show all commands in history window, including trivial ones (`why` only)
 - `--help` / `-h` — show help
+
+> **Note:** `apt-sync install` runs `apt-get` directly. Use `sudo apt-sync install` if you need root.
 
 ## License
 
