@@ -379,18 +379,15 @@ fn parse_shell_history(contents: &str) -> Vec<ShellHistoryEntry> {
 
     for line in contents.lines() {
         // Zsh format: ": epoch:0;command"
-        if let Some(rest) = line.strip_prefix(": ") {
-            if let Some((epoch_part, cmd)) = rest.split_once(';') {
-                // Parse "epoch:0" → extract epoch
-                if let Some(epoch_str) = epoch_part.split(':').next() {
-                    if let Ok(timestamp) = epoch_str.parse::<i64>() {
-                        entries.push(ShellHistoryEntry {
-                            timestamp,
-                            command: cmd.to_string(),
-                        });
-                    }
-                }
-            }
+        if let Some(rest) = line.strip_prefix(": ")
+            && let Some((epoch_part, cmd)) = rest.split_once(';')
+            && let Some(epoch_str) = epoch_part.split(':').next()
+            && let Ok(timestamp) = epoch_str.parse::<i64>()
+        {
+            entries.push(ShellHistoryEntry {
+                timestamp,
+                command: cmd.to_string(),
+            });
         }
         // Note: bash history without timestamps is not supported
         // (would need to track #epoch lines, but this system uses zsh)
