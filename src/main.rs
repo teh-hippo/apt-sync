@@ -261,9 +261,13 @@ struct ShellHistoryEntry {
     command: String,
 }
 
+/// Normalize "2026-02-10  21:50:50" to "2026-02-10 21:50:50" (single space)
+fn normalize_apt_date(apt_date: &str) -> String {
+    apt_date.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 fn read_journal_pwd(apt_date: &str, commandline: &str) -> Option<String> {
-    // Normalize "2026-02-10  21:50:50" to "2026-02-10 21:50:50" (single space)
-    let normalized = apt_date.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = normalize_apt_date(apt_date);
 
     // Query journal with ±60s window around the apt command
     let output = Command::new("journalctl")
@@ -396,8 +400,7 @@ fn parse_shell_history(contents: &str) -> Vec<ShellHistoryEntry> {
 }
 
 fn apt_date_to_epoch(apt_date: &str) -> Option<i64> {
-    // Normalize "2026-02-10  21:50:50" to "2026-02-10 21:50:50"
-    let normalized = apt_date.split_whitespace().collect::<Vec<_>>().join(" ");
+    let normalized = normalize_apt_date(apt_date);
 
     let output = Command::new("date")
         .args(["-d", &normalized, "+%s"])
