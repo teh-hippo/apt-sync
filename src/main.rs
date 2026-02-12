@@ -862,6 +862,13 @@ mod tests {
         }
     }
 
+    fn entry(timestamp: i64, command: &str) -> ShellHistoryEntry {
+        ShellHistoryEntry {
+            timestamp,
+            command: command.to_string(),
+        }
+    }
+
     #[test]
     fn parse_empty() {
         assert!(parse_packages("").is_empty());
@@ -1185,22 +1192,10 @@ End-Date: 2025-08-10  10:01:00
     #[test]
     fn find_nearby_commands_window() {
         let history = vec![
-            ShellHistoryEntry {
-                timestamp: 1000,
-                command: "git status".to_string(),
-            },
-            ShellHistoryEntry {
-                timestamp: 1100,
-                command: "cd ~/project".to_string(),
-            },
-            ShellHistoryEntry {
-                timestamp: 1500,
-                command: "make build".to_string(),
-            },
-            ShellHistoryEntry {
-                timestamp: 1800,
-                command: "vim README.md".to_string(),
-            },
+            entry(1000, "git status"),
+            entry(1100, "cd ~/project"),
+            entry(1500, "make build"),
+            entry(1800, "vim README.md"),
         ];
         let nearby = find_nearby_commands(&history, 1200, 300, false);
         // Within ±300s of 1200: 1000 (200s away), 1100 (100s away), 1500 (300s away)
@@ -1215,18 +1210,9 @@ End-Date: 2025-08-10  10:01:00
     #[test]
     fn find_nearby_commands_excludes_apt() {
         let history = vec![
-            ShellHistoryEntry {
-                timestamp: 1000,
-                command: "git status".to_string(),
-            },
-            ShellHistoryEntry {
-                timestamp: 1050,
-                command: "apt-get install foo".to_string(),
-            },
-            ShellHistoryEntry {
-                timestamp: 1100,
-                command: "apt install bar".to_string(),
-            },
+            entry(1000, "git status"),
+            entry(1050, "apt-get install foo"),
+            entry(1100, "apt install bar"),
         ];
         let nearby = find_nearby_commands(&history, 1050, 300, false);
         assert_eq!(nearby.len(), 1);
@@ -1237,10 +1223,7 @@ End-Date: 2025-08-10  10:01:00
     fn find_nearby_commands_caps_at_5() {
         let mut history = Vec::new();
         for i in 0..10 {
-            history.push(ShellHistoryEntry {
-                timestamp: 1000 + i * 10,
-                command: format!("command{i}"),
-            });
+            history.push(entry(1000 + i * 10, &format!("command{i}")));
         }
         let nearby = find_nearby_commands(&history, 1050, 300, false);
         assert_eq!(nearby.len(), 5);
@@ -1249,26 +1232,11 @@ End-Date: 2025-08-10  10:01:00
     #[test]
     fn find_nearby_commands_filters_trivial() {
         let history = vec![
-            ShellHistoryEntry {
-                timestamp: 1000,
-                command: "ls -la".to_string(),
-            },
-            ShellHistoryEntry {
-                timestamp: 1010,
-                command: "clear".to_string(),
-            },
-            ShellHistoryEntry {
-                timestamp: 1020,
-                command: "git status".to_string(),
-            },
-            ShellHistoryEntry {
-                timestamp: 1030,
-                command: "pwd".to_string(),
-            },
-            ShellHistoryEntry {
-                timestamp: 1040,
-                command: "cargo build".to_string(),
-            },
+            entry(1000, "ls -la"),
+            entry(1010, "clear"),
+            entry(1020, "git status"),
+            entry(1030, "pwd"),
+            entry(1040, "cargo build"),
         ];
         let nearby = find_nearby_commands(&history, 1020, 300, false);
         // Only git status and cargo build should be included
@@ -1283,18 +1251,9 @@ End-Date: 2025-08-10  10:01:00
     #[test]
     fn find_nearby_commands_show_all() {
         let history = vec![
-            ShellHistoryEntry {
-                timestamp: 1000,
-                command: "ls -la".to_string(),
-            },
-            ShellHistoryEntry {
-                timestamp: 1010,
-                command: "clear".to_string(),
-            },
-            ShellHistoryEntry {
-                timestamp: 1020,
-                command: "git status".to_string(),
-            },
+            entry(1000, "ls -la"),
+            entry(1010, "clear"),
+            entry(1020, "git status"),
         ];
         let nearby = find_nearby_commands(&history, 1010, 300, true);
         // With show_all=true, all commands should be included
