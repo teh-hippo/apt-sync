@@ -726,30 +726,17 @@ fn main() -> ExitCode {
     match cmd {
         "status" | "s" => cmd_status(&pkg_path),
         "list" | "ls" => cmd_list(&pkg_path),
-        "add" | "a" => {
-            if rest_no_flags.is_empty() {
-                eprintln!("{RED}Usage: apt-sync add <pkg...>{RESET}");
-                return ExitCode::FAILURE;
-            }
-            cmd_modify(&pkg_path, &rest_no_flags, true);
+        "add" | "a" | "remove" | "rm" | "why" | "w" if rest_no_flags.is_empty() => {
+            let name = match cmd { "a" => "add", "rm" => "remove", "w" => "why", c => c };
+            eprintln!("{RED}Usage: apt-sync {name} <pkg...>{RESET}");
+            return ExitCode::FAILURE;
         }
-        "remove" | "rm" => {
-            if rest_no_flags.is_empty() {
-                eprintln!("{RED}Usage: apt-sync remove <pkg...>{RESET}");
-                return ExitCode::FAILURE;
-            }
-            cmd_modify(&pkg_path, &rest_no_flags, false);
-        }
+        "add" | "a" => cmd_modify(&pkg_path, &rest_no_flags, true),
+        "remove" | "rm" => cmd_modify(&pkg_path, &rest_no_flags, false),
         "install" | "i" => cmd_install(&pkg_path, dry_run),
         "diff" | "d" => cmd_diff(&pkg_path),
         "snap" => cmd_snap(&pkg_path),
-        "why" | "w" => {
-            if rest_no_flags.is_empty() {
-                eprintln!("{RED}Usage: apt-sync why <pkg...>{RESET}");
-                return ExitCode::FAILURE;
-            }
-            cmd_why(&rest_no_flags, window_mins, show_all);
-        }
+        "why" | "w" => cmd_why(&rest_no_flags, window_mins, show_all),
         _ => {
             eprintln!("{RED}Unknown command: {cmd}{RESET}");
             print_help();
