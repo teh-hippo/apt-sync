@@ -51,10 +51,7 @@ fn pkg_file_path() -> PathBuf {
 }
 
 fn load_packages(path: &Path) -> BTreeSet<String> {
-    let Ok(contents) = fs::read_to_string(path) else {
-        return BTreeSet::new();
-    };
-    parse_packages(&contents)
+    fs::read_to_string(path).map_or_else(|_| BTreeSet::new(), |c| parse_packages(&c))
 }
 
 fn parse_packages(contents: &str) -> BTreeSet<String> {
