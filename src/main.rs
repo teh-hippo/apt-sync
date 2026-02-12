@@ -285,66 +285,33 @@ fn read_journal_pwd(apt_date: &str, commandline: &str) -> Option<String> {
 }
 
 fn parse_journal_pwd(journal_output: &str, commandline: &str) -> Option<String> {
-    // Extract key package names from commandline to match against COMMAND field
     let pkg_names: Vec<&str> = commandline
         .split_whitespace()
         .skip_while(|w| w.starts_with('-') || *w == "apt-get" || *w == "apt" || *w == "install")
         .filter(|w| !w.starts_with('-'))
         .collect();
-
     if pkg_names.is_empty() {
         return None;
     }
-
     let home = env::var("HOME").ok()?;
 
     for line in journal_output.lines() {
-        // Look for PWD= and COMMAND= anywhere in the line
-        if !line.contains("PWD=") || !line.contains("COMMAND=") {
-            continue;
-        }
+        // sudo journal format: "... ]: PWD=... ; USER=... ; COMMAND=..."
+        let fields = line.rsplit_once("]: ").map_or(line, |(_, f)| f);
+        let pwd = fields.split(" ; ").find_map(|f| f.strip_prefix("PWD="));
+        let command = fields.find("COMMAND=").map(|i| &fields[i + 8..]);
 
-        let mut pwd = None;
-        let mut command = None;
-
-        // Extract PWD value
-        if let Some(pwd_start) = line.find("PWD=") {
-            let after_pwd = &line[pwd_start + 4..];
-            // PWD value ends at the next semicolon or space-semicolon
-            let pwd_end = after_pwd
-                .find(" ;")
-                .or_else(|| after_pwd.find('\n'))
-                .unwrap_or(after_pwd.len());
-            pwd = Some(&after_pwd[..pwd_end]);
-        }
-
-        // Extract COMMAND value
-        if let Some(cmd_start) = line.find("COMMAND=") {
-            let after_cmd = &line[cmd_start + 8..];
-            // COMMAND value goes to end of line or next separator
-            let cmd_end = after_cmd.find('\n').unwrap_or(after_cmd.len());
-            command = Some(&after_cmd[..cmd_end]);
-        }
-
-        // Check if this line matches our apt command
-        if let (Some(p), Some(c)) = (pwd, command) {
-            // Match if command contains apt and any of our package names
-            if c.contains("apt") && pkg_names.iter().any(|pkg| c.contains(pkg)) {
-                // Replace $HOME with ~ for display
-                let display_path = if let Some(rel) = p.strip_prefix(&home) {
-                    if rel.is_empty() {
-                        "~".to_string()
-                    } else {
-                        format!("~{rel}")
-                    }
-                } else {
-                    p.to_string()
-                };
-                return Some(display_path);
-            }
+        if let (Some(p), Some(c)) = (pwd, command)
+            && c.contains("apt")
+            && pkg_names.iter().any(|pkg| c.contains(pkg))
+        {
+            return Some(
+                p.strip_prefix(home.as_str())
+                    .map(|rel| if rel.is_empty() { "~".to_string() } else { format!("~{rel}") })
+                    .unwrap_or_else(|| p.to_string()),
+            );
         }
     }
-
     None
 }
 
