@@ -584,13 +584,13 @@ fn cmd_install(pkg_path: &Path, dry_run: bool) {
     if dry_run {
         println!("{YELLOW}🏜️  Dry run — nothing was installed{RESET}");
         println!(
-            "{DIM}Would run: sudo apt-get install -y {}{RESET}",
+            "{DIM}Would run: apt-get install -y {}{RESET}",
             missing.join(" ")
         );
         return;
     }
-    let status = Command::new("sudo")
-        .args(["apt-get", "install", "-y"])
+    let status = Command::new("apt-get")
+        .args(["install", "-y"])
         .args(&missing)
         .status()
         .expect("failed to run apt-get");
