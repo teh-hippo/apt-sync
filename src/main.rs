@@ -422,42 +422,22 @@ fn find_nearby_commands(
     window_secs: i64,
     show_all: bool,
 ) -> Vec<String> {
-    let mut nearby: Vec<(&ShellHistoryEntry, i64)> = history
+    let mut nearby: Vec<_> = history
         .iter()
-        .filter_map(|entry| {
-            let delta = (entry.timestamp - target_epoch).abs();
-            if delta <= window_secs {
-                Some((entry, delta))
-            } else {
-                None
-            }
+        .filter_map(|e| {
+            let d = (e.timestamp - target_epoch).abs();
+            (d <= window_secs).then_some((e, d))
         })
         .collect();
-
-    // Sort by proximity to target time
-    nearby.sort_by_key(|(_, delta)| *delta);
-
-    let mut commands = Vec::new();
-    for (entry, _) in nearby {
-        // Skip apt install commands
-        if entry.command.contains("apt-get install") || entry.command.contains("apt install") {
-            continue;
-        }
-
-        // Skip trivial commands unless show_all
-        if !show_all && !is_interesting_command(&entry.command) {
-            continue;
-        }
-
-        commands.push(entry.command.clone());
-
-        // Cap at 5 commands
-        if commands.len() >= 5 {
-            break;
-        }
-    }
-
-    commands
+    nearby.sort_by_key(|(_, d)| *d);
+    nearby
+        .into_iter()
+        .map(|(e, _)| &e.command)
+        .filter(|c| !c.contains("apt-get install") && !c.contains("apt install"))
+        .filter(|c| show_all || is_interesting_command(c))
+        .take(5)
+        .cloned()
+        .collect()
 }
 
 // ── Commands ────────────────────────────────────────────────────────
