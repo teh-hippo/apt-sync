@@ -408,19 +408,16 @@ fn cmd_status(pkg_path: &Path) {
         pkgs.len()
     );
     let installed = installed_set(&pkgs);
-    let mut n_installed = 0u32;
-    let mut n_missing = 0u32;
     for p in &pkgs {
         if installed.contains(p) {
             println!("  {GREEN}✔ {p}{RESET}");
-            n_installed += 1;
         } else {
             println!("  {RED}✘ {p}{RESET}  {DIM}(not installed){RESET}");
-            n_missing += 1;
         }
     }
+    let n_missing = pkgs.len() - installed.len();
     println!();
-    println!("  {GREEN}{n_installed} installed{RESET}  {RED}{n_missing} missing{RESET}");
+    println!("  {GREEN}{} installed{RESET}  {RED}{n_missing} missing{RESET}", installed.len());
     if n_missing > 0 {
         println!("  {DIM}Run `apt-sync install` to install missing packages{RESET}");
     }
