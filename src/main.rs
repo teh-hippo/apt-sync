@@ -129,20 +129,14 @@ struct HistoryEntry {
 fn read_history_logs() -> String {
     let mut buf = String::new();
 
-    // Read rotated .gz logs (oldest first → newest last)
     let mut gz_paths: Vec<PathBuf> = fs::read_dir("/var/log/apt")
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
         .map(|e| e.path())
-        .filter(|p| {
-            p.extension().is_some_and(|e| e == "gz")
-                && p.file_name()
-                    .is_some_and(|n| n.to_string_lossy().starts_with("history"))
-        })
+        .filter(|p| p.file_name().is_some_and(|n| { let s = n.to_string_lossy(); s.starts_with("history") && s.ends_with(".gz") }))
         .collect();
-    gz_paths.sort();
-    gz_paths.reverse(); // highest number = oldest, read oldest first
+    gz_paths.sort_by(|a, b| b.cmp(a)); // highest number = oldest, read oldest first
 
     if !gz_paths.is_empty()
         && let Ok(output) = Command::new("zcat").args(&gz_paths).output()
@@ -150,7 +144,6 @@ fn read_history_logs() -> String {
         buf.push_str(&String::from_utf8_lossy(&output.stdout));
     }
 
-    // Current log last (most recent)
     if let Ok(current) = fs::read_to_string("/var/log/apt/history.log") {
         buf.push_str(&current);
     }
