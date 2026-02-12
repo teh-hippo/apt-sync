@@ -281,11 +281,7 @@ fn parse_journal_pwd(journal_output: &str, commandline: &str) -> Option<String> 
             && c.contains("apt")
             && pkg_names.iter().any(|pkg| c.contains(pkg))
         {
-            return Some(
-                p.strip_prefix(home.as_str())
-                    .map(|rel| if rel.is_empty() { "~".to_string() } else { format!("~{rel}") })
-                    .unwrap_or_else(|| p.to_string()),
-            );
+            return Some(p.strip_prefix(home.as_str()).map_or_else(|| p.to_string(), |rel| format!("~{rel}")));
         }
     }
     None
