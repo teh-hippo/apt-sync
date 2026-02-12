@@ -159,35 +159,26 @@ fn read_history_logs() -> String {
 }
 
 fn parse_history(log: &str) -> Vec<HistoryEntry> {
-    let mut entries = Vec::new();
-    let mut date = String::new();
-    let mut cmdline = String::new();
-    let mut requested = None;
-    let mut installed = Vec::new();
-
-    for line in log.lines() {
-        if let Some(d) = line.strip_prefix("Start-Date: ") {
-            date = d.trim().to_string();
-            cmdline.clear();
-            requested = None;
-            installed.clear();
-        } else if let Some(c) = line.strip_prefix("Commandline: ") {
-            cmdline = c.trim().to_string();
-        } else if let Some(r) = line.strip_prefix("Requested-By: ") {
-            requested = Some(r.trim().to_string());
-        } else if let Some(pkgs) = line.strip_prefix("Install: ") {
-            installed = parse_history_packages(pkgs);
-        } else if line.starts_with("End-Date: ") && !installed.is_empty() {
-            entries.push(HistoryEntry {
-                date: date.clone(),
-                commandline: cmdline.clone(),
-                requested_by: requested.clone(),
-                installed: installed.clone(),
-            });
-        }
-    }
-
-    entries
+    log.split("\n\n")
+        .filter_map(|block| {
+            let mut date = "";
+            let mut cmdline = "";
+            let mut requested = None;
+            let mut installed = Vec::new();
+            for line in block.lines() {
+                if let Some(d) = line.strip_prefix("Start-Date: ") { date = d.trim(); }
+                else if let Some(c) = line.strip_prefix("Commandline: ") { cmdline = c.trim(); }
+                else if let Some(r) = line.strip_prefix("Requested-By: ") { requested = Some(r.trim().to_string()); }
+                else if let Some(pkgs) = line.strip_prefix("Install: ") { installed = parse_history_packages(pkgs); }
+            }
+            (!installed.is_empty()).then(|| HistoryEntry {
+                date: date.to_string(),
+                commandline: cmdline.to_string(),
+                requested_by: requested,
+                installed,
+            })
+        })
+        .collect()
 }
 
 fn parse_history_packages(pkgs_line: &str) -> Vec<String> {
