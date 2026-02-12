@@ -349,14 +349,6 @@ fn apt_date_to_epoch(apt_date: &str) -> Option<i64> {
     stdout.trim().parse::<i64>().ok()
 }
 
-fn is_interesting_command(cmd: &str) -> bool {
-    let first_word = cmd.split_whitespace().next().unwrap_or("");
-    !matches!(
-        first_word,
-        "ls" | "clear" | "exit" | "pwd" | "echo" | "cat" | "true" | "history" | ""
-    )
-}
-
 fn find_nearby_commands(
     history: &[ShellHistoryEntry],
     target_epoch: i64,
@@ -375,7 +367,13 @@ fn find_nearby_commands(
         .into_iter()
         .map(|(e, _)| &e.command)
         .filter(|c| !c.contains("apt-get install") && !c.contains("apt install"))
-        .filter(|c| show_all || is_interesting_command(c))
+        .filter(|c| {
+            show_all
+                || !matches!(
+                    c.split_whitespace().next().unwrap_or(""),
+                    "ls" | "clear" | "exit" | "pwd" | "echo" | "cat" | "true" | "history" | ""
+                )
+        })
         .take(5)
         .cloned()
         .collect()
