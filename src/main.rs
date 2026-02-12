@@ -502,54 +502,30 @@ fn cmd_list(pkg_path: &Path) {
     }
 }
 
-fn cmd_add(pkg_path: &Path, names: &[String]) {
+fn cmd_modify(pkg_path: &Path, names: &[String], add: bool) {
     let mut pkgs = load_packages(pkg_path);
-    let mut added = Vec::new();
-    let mut already = Vec::new();
+    let mut changed = Vec::new();
+    let mut unchanged = Vec::new();
     for name in names {
-        if pkgs.insert(name.clone()) {
-            added.push(name.as_str());
-        } else {
-            already.push(name.as_str());
-        }
+        let ok = if add { pkgs.insert(name.clone()) } else { pkgs.remove(name) };
+        if ok { changed.push(name.as_str()) } else { unchanged.push(name.as_str()) }
     }
     save_packages(pkg_path, &pkgs).expect("failed to write packages.txt");
-    for a in &added {
-        println!("  {GREEN}＋ {a}{RESET}");
+    let (sym, color, verb, skip_msg) = if add {
+        ("＋", GREEN, "Added", "already listed")
+    } else {
+        ("－", RED, "Removed", "not in list")
+    };
+    for c in &changed {
+        println!("  {color}{sym} {c}{RESET}");
     }
-    for a in &already {
-        println!("  {DIM}  {a} (already listed){RESET}");
+    for u in &unchanged {
+        println!("  {DIM}  {u} ({skip_msg}){RESET}");
     }
-    if !added.is_empty() {
+    if !changed.is_empty() {
         println!(
-            "\n{CYAN}📝 Added {} package(s) to packages.txt{RESET}",
-            added.len()
-        );
-    }
-}
-
-fn cmd_remove(pkg_path: &Path, names: &[String]) {
-    let mut pkgs = load_packages(pkg_path);
-    let mut removed = Vec::new();
-    let mut not_found = Vec::new();
-    for name in names {
-        if pkgs.remove(name) {
-            removed.push(name.as_str());
-        } else {
-            not_found.push(name.as_str());
-        }
-    }
-    save_packages(pkg_path, &pkgs).expect("failed to write packages.txt");
-    for r in &removed {
-        println!("  {RED}－ {r}{RESET}");
-    }
-    for n in &not_found {
-        println!("  {DIM}  {n} (not in list){RESET}");
-    }
-    if !removed.is_empty() {
-        println!(
-            "\n{CYAN}📝 Removed {} package(s) from packages.txt{RESET}",
-            removed.len()
+            "\n{CYAN}📝 {verb} {} package(s) from packages.txt{RESET}",
+            changed.len()
         );
     }
 }
@@ -681,7 +657,7 @@ fn cmd_snap(pkg_path: &Path) {
         println!("\n{DIM}No packages added.{RESET}");
         return;
     }
-    cmd_add(pkg_path, &to_add);
+    cmd_modify(pkg_path, &to_add, true);
 }
 
 fn cmd_why(names: &[String], window_mins: u32, show_all: bool) {
@@ -805,14 +781,14 @@ fn main() -> ExitCode {
                 eprintln!("{RED}Usage: apt-sync add <pkg...>{RESET}");
                 return ExitCode::FAILURE;
             }
-            cmd_add(&pkg_path, &rest_no_flags);
+            cmd_modify(&pkg_path, &rest_no_flags, true);
         }
         "remove" | "rm" => {
             if rest_no_flags.is_empty() {
                 eprintln!("{RED}Usage: apt-sync remove <pkg...>{RESET}");
                 return ExitCode::FAILURE;
             }
-            cmd_remove(&pkg_path, &rest_no_flags);
+            cmd_modify(&pkg_path, &rest_no_flags, false);
         }
         "install" | "i" => cmd_install(&pkg_path, dry_run),
         "diff" | "d" => cmd_diff(&pkg_path),
@@ -949,11 +925,11 @@ mod tests {
         let tmp = TempFile::new("addrem.txt");
         save_packages(&tmp, &BTreeSet::new()).unwrap();
 
-        cmd_add(&tmp, &["curl".into(), "git".into(), "zsh".into()]);
+        cmd_modify(&tmp, &["curl".into(), "git".into(), "zsh".into()], true);
         let pkgs = load_packages(&tmp);
         assert_eq!(pkgs.len(), 3);
 
-        cmd_remove(&tmp, &["git".into()]);
+        cmd_modify(&tmp, &["git".into()], false);
         let pkgs = load_packages(&tmp);
         assert_eq!(pkgs.len(), 2);
         assert!(!pkgs.contains("git"));
@@ -987,14 +963,14 @@ mod tests {
         let tmp = TempFile::new("dup.txt");
         save_packages(&tmp, &BTreeSet::new()).unwrap();
 
-        cmd_add(&tmp, &["git".into(), "git".into(), "curl".into()]);
+        cmd_modify(&tmp, &["git".into(), "git".into(), "curl".into()], true);
         let pkgs = load_packages(&tmp);
         assert_eq!(pkgs.len(), 2);
         assert!(pkgs.contains("git"));
         assert!(pkgs.contains("curl"));
 
         // Adding again doesn't duplicate
-        cmd_add(&tmp, &["git".into()]);
+        cmd_modify(&tmp, &["git".into()], true);
         let pkgs = load_packages(&tmp);
         assert_eq!(pkgs.len(), 2);
     }
