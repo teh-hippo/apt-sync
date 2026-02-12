@@ -265,9 +265,7 @@ fn read_shell_history() -> Vec<ShellHistoryEntry> {
             .find(|p| p.exists())
             .map(|p| p.to_string_lossy().to_string())
     });
-    let Some(path) = path else { return Vec::new() };
-    let Ok(contents) = fs::read_to_string(&path) else { return Vec::new() };
-    parse_shell_history(&contents)
+    path.and_then(|p| fs::read_to_string(p).ok()).map_or_else(Vec::new, |c| parse_shell_history(&c))
 }
 
 fn parse_shell_history(contents: &str) -> Vec<ShellHistoryEntry> {
