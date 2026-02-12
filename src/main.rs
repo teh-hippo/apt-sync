@@ -194,15 +194,6 @@ fn format_pkg_list(pkgs: &[&str]) -> String {
     if pkgs.len() > MAX { format!("{s} + {} more", pkgs.len() - MAX) } else { s }
 }
 
-fn siblings<'a>(entry: &'a HistoryEntry, name: &str) -> Vec<&'a str> {
-    entry
-        .installed
-        .iter()
-        .map(String::as_str)
-        .filter(|p| *p != name)
-        .collect()
-}
-
 fn same_day_neighbors<'a>(
     entries: &'a [HistoryEntry],
     entry: &HistoryEntry,
@@ -553,7 +544,7 @@ fn cmd_why(names: &[String], window_mins: u32, show_all: bool) {
                 println!("     {DIM}in: {pwd}{RESET}");
             }
 
-            let sibs = siblings(entry, name);
+            let sibs: Vec<&str> = entry.installed.iter().map(String::as_str).filter(|p| *p != name).collect();
             if !sibs.is_empty() {
                 println!("     {DIM}with: {}{RESET}", format_pkg_list(&sibs));
             }
@@ -905,7 +896,7 @@ End-Date: 2025-08-10  10:01:00
         let entries = parse_history(log);
         let hits = find_install_history(&entries, "uidmap");
         assert_eq!(hits.len(), 1);
-        let sibs = siblings(hits[0], "uidmap");
+        let sibs: Vec<&str> = hits[0].installed.iter().map(String::as_str).filter(|p| *p != "uidmap").collect();
         assert_eq!(sibs, vec!["aardvark-dns"]);
     }
 
@@ -924,7 +915,7 @@ End-Date: 2025-08-10  14:01:00
 ";
         let entries = parse_history(log);
         let hits = find_install_history(&entries, "uidmap");
-        let sibs = siblings(hits[0], "uidmap");
+        let sibs: Vec<&str> = hits[0].installed.iter().map(String::as_str).filter(|p| *p != "uidmap").collect();
         let sibling_set: BTreeSet<&str> = sibs.iter().copied().collect();
         let neighbors = same_day_neighbors(&entries, hits[0], "uidmap", &sibling_set);
         assert_eq!(neighbors, vec!["podman", "slirp4netns"]);
@@ -945,7 +936,7 @@ End-Date: 2025-08-10  14:01:00
 ";
         let entries = parse_history(log);
         let hits = find_install_history(&entries, "uidmap");
-        let sibs = siblings(hits[0], "uidmap");
+        let sibs: Vec<&str> = hits[0].installed.iter().map(String::as_str).filter(|p| *p != "uidmap").collect();
         assert!(sibs.contains(&"aardvark-dns"));
         let sibling_set: BTreeSet<&str> = sibs.iter().copied().collect();
         let neighbors = same_day_neighbors(&entries, hits[0], "uidmap", &sibling_set);
@@ -964,7 +955,7 @@ End-Date: 2025-08-10  10:01:00
 ";
         let entries = parse_history(log);
         let hits = find_install_history(&entries, "uidmap");
-        let sibs = siblings(hits[0], "uidmap");
+        let sibs: Vec<&str> = hits[0].installed.iter().map(String::as_str).filter(|p| *p != "uidmap").collect();
         assert!(sibs.is_empty());
         let sibling_set: BTreeSet<&str> = sibs.iter().copied().collect();
         let neighbors = same_day_neighbors(&entries, hits[0], "uidmap", &sibling_set);
