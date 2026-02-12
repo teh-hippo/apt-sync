@@ -256,7 +256,6 @@ fn same_day_neighbors<'a>(
 
 // ── Shell history and journal context ───────────────────────────────
 
-#[derive(Debug, Clone)]
 struct ShellHistoryEntry {
     timestamp: i64,
     command: String,
