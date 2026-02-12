@@ -172,18 +172,11 @@ fn parse_history(log: &str) -> Vec<HistoryEntry> {
 }
 
 fn parse_history_packages(pkgs_line: &str) -> Vec<String> {
-    // Entries are separated by "), " — commas inside parens are part of the entry
     pkgs_line
         .split("), ")
         .filter_map(|entry| {
-            let name = entry.split(':').next()?;
-            if name.is_empty() {
-                return None;
-            }
-            if entry.contains("automatic") {
-                return None;
-            }
-            Some(name.to_string())
+            let name = entry.split(':').next().filter(|n| !n.is_empty())?;
+            (!entry.contains("automatic")).then(|| name.to_string())
         })
         .collect()
 }
