@@ -316,31 +316,16 @@ fn parse_journal_pwd(journal_output: &str, commandline: &str) -> Option<String> 
 }
 
 fn read_shell_history() -> Vec<ShellHistoryEntry> {
-    // Detect history file
-    let history_path = env::var("HISTFILE")
-        .ok()
-        .or_else(|| {
-            env::var("HOME").ok().and_then(|home| {
-                let zsh_hist = PathBuf::from(&home).join(".zsh_history");
-                let bash_hist = PathBuf::from(&home).join(".bash_history");
-                if zsh_hist.exists() {
-                    Some(zsh_hist.to_string_lossy().to_string())
-                } else if bash_hist.exists() {
-                    Some(bash_hist.to_string_lossy().to_string())
-                } else {
-                    None
-                }
-            })
-        });
-
-    let Some(path) = history_path else {
-        return Vec::new();
-    };
-
-    let Ok(contents) = fs::read_to_string(&path) else {
-        return Vec::new();
-    };
-
+    let path = env::var("HISTFILE").ok().or_else(|| {
+        let home = env::var("HOME").ok()?;
+        [".zsh_history", ".bash_history"]
+            .iter()
+            .map(|f| PathBuf::from(&home).join(f))
+            .find(|p| p.exists())
+            .map(|p| p.to_string_lossy().to_string())
+    });
+    let Some(path) = path else { return Vec::new() };
+    let Ok(contents) = fs::read_to_string(&path) else { return Vec::new() };
     parse_shell_history(&contents)
 }
 
