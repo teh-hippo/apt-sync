@@ -144,10 +144,10 @@ fn read_history_logs() -> String {
     gz_paths.sort();
     gz_paths.reverse(); // highest number = oldest, read oldest first
 
-    for path in &gz_paths {
-        if let Ok(output) = Command::new("zcat").arg(path).output() {
-            buf.push_str(&String::from_utf8_lossy(&output.stdout));
-        }
+    if !gz_paths.is_empty()
+        && let Ok(output) = Command::new("zcat").args(&gz_paths).output()
+    {
+        buf.push_str(&String::from_utf8_lossy(&output.stdout));
     }
 
     // Current log last (most recent)
