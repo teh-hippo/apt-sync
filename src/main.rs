@@ -297,25 +297,12 @@ fn read_shell_history() -> Vec<ShellHistoryEntry> {
 }
 
 fn parse_shell_history(contents: &str) -> Vec<ShellHistoryEntry> {
-    let mut entries = Vec::new();
-
-    for line in contents.lines() {
-        // Zsh format: ": epoch:0;command"
-        if let Some(rest) = line.strip_prefix(": ")
-            && let Some((epoch_part, cmd)) = rest.split_once(';')
-            && let Some(epoch_str) = epoch_part.split(':').next()
-            && let Ok(timestamp) = epoch_str.parse::<i64>()
-        {
-            entries.push(ShellHistoryEntry {
-                timestamp,
-                command: cmd.to_string(),
-            });
-        }
-        // Note: bash history without timestamps is not supported
-        // (would need to track #epoch lines, but this system uses zsh)
-    }
-
-    entries
+    contents.lines().filter_map(|line| {
+        let rest = line.strip_prefix(": ")?;
+        let (epoch_part, cmd) = rest.split_once(';')?;
+        let timestamp = epoch_part.split(':').next()?.parse().ok()?;
+        Some(ShellHistoryEntry { timestamp, command: cmd.to_string() })
+    }).collect()
 }
 
 fn apt_date_to_epoch(apt_date: &str) -> Option<i64> {
