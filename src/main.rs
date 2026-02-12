@@ -19,33 +19,23 @@ const CYAN: &str = "\x1b[36m";
 const PKG_FILENAME: &str = "packages.txt";
 
 fn pkg_file_path() -> PathBuf {
-    // 1. Explicit override via env var
     if let Ok(path) = env::var("APT_SYNC_FILE") {
         return PathBuf::from(path);
     }
-
-    // 2. XDG config dir (~/.config/apt-sync/packages.txt)
-    let config_dir = env::var("XDG_CONFIG_HOME").map_or_else(
-        |_| {
-            let home = env::var("HOME").unwrap_or_else(|_| ".".into());
-            PathBuf::from(home).join(".config")
-        },
-        PathBuf::from,
-    )
-    .join("apt-sync");
+    let home = env::var("HOME").unwrap_or_else(|_| ".".into());
+    let config_dir = env::var("XDG_CONFIG_HOME")
+        .map_or_else(|_| PathBuf::from(&home).join(".config"), PathBuf::from)
+        .join("apt-sync");
     let xdg_path = config_dir.join(PKG_FILENAME);
     if xdg_path.exists() {
         return xdg_path;
     }
-
-    // 3. Dev mode: walk up from binary to find Cargo.toml
-    let exe = env::current_exe().unwrap_or_default();
-    let dir = exe.parent().unwrap_or_else(|| Path::new("."));
-    if let Some(repo) = dir.ancestors().find(|p| p.join("Cargo.toml").exists()) {
+    if let Some(repo) = env::current_exe().unwrap_or_default()
+        .parent().unwrap_or(Path::new("."))
+        .ancestors().find(|p| p.join("Cargo.toml").exists())
+    {
         return repo.join(PKG_FILENAME);
     }
-
-    // 4. Default to XDG path (will be created on first write)
     let _ = fs::create_dir_all(&config_dir);
     xdg_path
 }
