@@ -207,13 +207,8 @@ fn find_install_history<'a>(entries: &'a [HistoryEntry], pkg: &str) -> Vec<&'a H
 
 fn format_pkg_list(pkgs: &[&str]) -> String {
     const MAX: usize = 10;
-    if pkgs.len() <= MAX {
-        pkgs.join(", ")
-    } else {
-        let mut s = pkgs[..MAX].join(", ");
-        s.push_str(&format!(" + {} more", pkgs.len() - MAX));
-        s
-    }
+    let s = pkgs[..pkgs.len().min(MAX)].join(", ");
+    if pkgs.len() > MAX { format!("{s} + {} more", pkgs.len() - MAX) } else { s }
 }
 
 fn siblings<'a>(entry: &'a HistoryEntry, name: &str) -> Vec<&'a str> {
